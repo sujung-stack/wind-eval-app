@@ -1,82 +1,86 @@
-# 🌬️ 풍환경 종합 안전평가 시스템 (Streamlit 기반)
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
 
-st.title("🌬️ 풍환경 종합 안전평가 시스템")
+st.set_page_config(layout="wide")
+st.title("🌪️ 풍환경 종합 안전평가 시스템")
 st.markdown("""
-CSV 파일을 업로드하면, 각 지점별 **Lawson / NEN8100 / Murakami 기준 등급**, 
-그리고 종합 안전성 평가를 자동으로 수행하고, 노모그램으로 시각화합니다.
+CSV 파일을 업로드하면 각 지점별 **Lawson / NEN8100 / Murakami** 등급과 종합평가를 수행하고 노모그램 위에 시각화합니다.
 """)
 
-uploaded_file = st.file_uploader("CSV 파일 업로드 (예: data.csv)", type=["csv"])
-
+uploaded_file = st.file_uploader("CSV 파일 업로드 (예: 지점, 풍속, 초과확률, 풍속비)", type="csv")
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
 
-    def classify_lawson(v):
-        if v < 4: return "A"
-        elif v < 6: return "B"
-        elif v < 8: return "C"
-        elif v < 10: return "D"
-        elif v < 15: return "E"
-        elif v < 20: return "S"
-        else: return "S+"
+    # 등급 기준 정의
+    lawson_bins = [0, 4, 6, 8, 10, 15, 20]
+    lawson_labels = ['A', 'B', 'C', 'D', 'E', 'E']
+    
+    nen8100_bins = [0, 2.5, 5, 10, 20, 100]
+    nen8100_labels = ['A', 'B', 'C', 'D', 'E']
+    
+    murakami_bins = [0, 1.0, 1.1, 1.5, 100]
+    murakami_labels = ['1', '2', '3', '4']
 
-    def classify_nen(p):
-        if p < 2.5: return "A"
-        elif p < 5: return "B"
-        elif p < 10: return "C"
-        elif p < 20: return "D"
-        else: return "E"
+    # 등급 계산
+    df['Lawson 등급'] = pd.cut(df['풍속'], bins=lawson_bins, labels=lawson_labels, right=False)
+    df['NEN8100 등급'] = pd.cut(df['초과확률'], bins=nen8100_bins, labels=nen8100_labels, right=False)
+    df['Murakami 등급'] = pd.cut(df['풍속비'], bins=murakami_bins, labels=murakami_labels, right=False)
 
-    def classify_murakami(r):
-        if r < 0.15: return "1"
-        elif r < 0.3: return "2"
-        elif r < 0.5: return "3"
-        else: return "4"
+    # 종합 평가
+    df['종합 평가'] = df.apply(
+        lambda row: '위험' if 'E' in [row['Lawson 등급'], row['NEN8100 등급']] or row['Murakami 등급'] == '4' else '양호',
+        axis=1
+    )
 
-    def evaluate_safety(l, n, m):
-        danger_count = sum([l in ["E", "S", "S+"], n in ["D", "E"], m in ["3", "4"]])
-        if danger_count >= 2:
-            return "위험"
-        elif danger_count == 1:
-            return "주의"
-        else:
-            return "안전"
+    st.dataframe(df)
 
-    results = []
-    for _, row in df.iterrows():
-        lawson = classify_lawson(row["풍속 (m/s)"])
-        nen = classify_nen(row["초과확률 (%)"])
-        murakami = classify_murakami(row["풍속비 (V/Vref)"])
-        safety = evaluate_safety(lawson, nen, murakami)
-        results.append((row["지점"], lawson, nen, murakami, safety))
+    # 정규화 함수
+    def normalize(series, min_val, max_val):
+        return (series - min_val) / (max_val - min_val)
 
-    st.subheader("📋 평가 결과 요약")
-    result_df = pd.DataFrame(results, columns=["지점", "Lawson 등급", "NEN8100 등급", "Murakami 등급", "종합 평가"])
-    st.dataframe(result_df)
+    # 정규화된 위치 계산
+    lawson_y = normalize(df['풍속'], 4, 20)
+    nen8100_y = normalize(df['초과확률'], 0, 20)
+    murakami_y = normalize(df['풍속비'], 1.0, 1.5)
 
-    st.subheader("📈 노모그램 시각화")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    y_levels = {"A": 0.9, "B": 0.75, "C": 0.6, "D": 0.45, "E": 0.3, "S": 0.15, "S+": 0.05,
-                "1": 0.85, "2": 0.6, "3": 0.35, "4": 0.1}
+    # 시각화
+    st.markdown("### 🧭 노모그램 시각화")
 
-    for i, (point, lawson, nen, murakami, safety) in enumerate(results):
-        x_vals = [0.1, 0.5, 0.9]
-        y_vals = [y_levels[lawson], y_levels[nen], y_levels[murakami]]
-        ax.plot(x_vals, y_vals, marker="o", linestyle="--", label=f"{point} ({safety})")
+    fig, ax = plt.subplots(figsize=(6, 8))
+    ax.set_ylim(0, 1)
+    ax.set_xticks([0, 1, 2])
+    ax.set_xticklabels(["NEN8100 (%)", "Lawson 2001 (m/s)", "Murakami (V/V⃞)"])
+    ax.set_ylabel("Normalization 0-1")
+    ax.set_title("Nomogram")
 
-    ax.text(0.1, 1.02, "Lawson", ha='center', fontsize=12, weight='bold')
-    ax.text(0.5, 1.02, "NEN8100", ha='center', fontsize=12, weight='bold')
-    ax.text(0.9, 1.02, "Murakami", ha='center', fontsize=12, weight='bold')
-    ax.set_xlim(0, 1.1)
-    ax.set_ylim(0, 1.05)
-    ax.axis('off')
-    ax.legend()
-    st.pyplot(fig)
+    # 등급 영역 색상 표시 (Lawson 예시로 모두 동일 스타일 적용)
+    color_bands = {
+        "Lawson": ([0, 4, 6, 8, 10, 15, 20], ['blue', 'dodgerblue', 'cyan', 'yellowgreen', 'orange', 'red']),
+        "NEN8100": ([0, 2.5, 5, 10, 20], ['blue', 'skyblue', 'lightgreen', 'orange', 'red']),
+        "Murakami": ([0, 1.0, 1.1, 1.5, 2.0], ['blue', 'lightblue', 'yellowgreen', 'red'])
+    }
 
-    st.download_button("📥 결과 CSV 다운로드", result_df.to_csv(index=False).encode('utf-8-sig'), file_name="평가결과.csv", mime="text/csv")
+    def draw_band(x_pos, bins, colors):
+        for i in range(len(colors)):
+            y0 = (bins[i] - bins[0]) / (bins[-1] - bins[0])
+            y1 = (bins[i+1] - bins[0]) / (bins[-1] - bins[0])
+            ax.fill_betweenx([y0, y1], x_pos - 0.4, x_pos + 0.4, color=colors[i])
+
+    draw_band(0, *color_bands["NEN8100"])
+    draw_band(1, *color_bands["Lawson"])
+    draw_band(2, *color_bands["Murakami"])
+
+    # 각 지점 위치에 점선 추가
+    for y1, y2, y3 in zip(nen8100_y, lawson_y, murakami_y):
+        ax.hlines(y=y1, xmin=-0.4, xmax=+0.4, linestyles='dashed', colors='black', linewidth=1)
+        ax.hlines(y=y2, xmin=0.6, xmax=1.4, linestyles='dashed', colors='black', linewidth=1)
+        ax.hlines(y=y3, xmin=1.6, xmax=2.4, linestyles='dashed', colors='black', linewidth=1)
+
+    st.pyplot(fig, use_container_width=True)
+
+    # 결과 저장
+    st.download_button("📥 결과 CSV 다운로드", df.to_csv(index=False).encode('utf-8-sig'), "result.csv", "text/csv")
+
 else:
-    st.info("왼쪽 사이드바 또는 위에서 CSV 파일을 업로드해주세요.")
+    st.info("예시 CSV 파일을 업로드하면 등급 분류 및 노모그램 시각화가 수행됩니다.")
